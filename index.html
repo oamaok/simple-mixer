@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Simple Mixer by Teemu Pääkkönen</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        padding: 0;
+        margin: 0;
+        outline: none;
+        border: none;
+        background: none;
+        text-decoration: none;
+        text-transform: uppercase;
+        font-size: 12px;
+        font-family: Arial, Helvetica, sans-serif;
+        box-sizing: border-box;
+      }
+
+      #init-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        right: 0;
+        width: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .mixer {
+        margin: 100px;
+        width: 610px;
+        border: 1px solid #ccc;
+        padding: 4px;
+      }
+
+      .controls {
+        width: 600px;
+        display: flex;
+        flex-direction: row;
+        padding-bottom: 4px;
+      }
+
+      .play-button {
+        width: 100px;
+        height: 100px;
+        padding: 12px;
+      }
+
+      .play-button button {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: rgb(200, 100, 0);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        box-shadow: 1px 1px 1px rgba(0, 0, 0, 0.5);
+      }
+
+      .play-button button span {
+        font-size: 32px;
+        color: #fff;
+      }
+
+      .waveform {
+        height: 100px;
+        width: 500px;
+        border: 1px solid #ccc;
+      }
+
+      .master-separator {
+        border-right: 5px solid #ccc;
+        height: 100%;
+      }
+
+      .buses {
+        display: flex;
+        height: 200px;
+        flex-direction: row;
+        padding: 16px 0px 8px 0px;
+        border-top: 1px solid #ccc;
+      }
+
+      .bus {
+        display: flex;
+        flex-direction: row;
+        border-right: 2px dotted #ccc;
+        padding: 0 8px;
+        width: 64px;
+      }
+
+      .bus .slider {
+        width: 16px;
+        position: relative;
+      }
+
+      .bus .slider button {
+        top: 0;
+        height: 16px;
+        width: 16px;
+        border: 1px solid #ccc;
+        background: #eee;
+        position: absolute;
+        border-radius: 4px;
+        box-shadow: 1px 1px 1px rgba(0, 0, 0, 0.5);
+        transform: translateY(40px);
+      }
+
+      .bus .slider .track {
+        height: 100%;
+        width: 4px;
+        background: #aaa;
+        position: relative;
+        left: 7px;
+        border-radius: 4px;
+        border-right: 1px solid #eee;
+        border-left: 1px solid #888;
+      }
+
+      .bus .name-and-level {
+        height: 100%;
+        position: relative;
+        width: 16px;
+        padding-left: 8px;
+      }
+
+      .bus .name {
+        text-orientation: mixed;
+        width: 65px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transform: rotate(90deg) translate(-7px, -7px);
+        transform-origin: left;
+        position: absolute;
+      }
+
+      .bus .level {
+        height: 110px;
+        border: 1px solid #ccc;
+        width: 100%;
+        position: absolute;
+        bottom: 0;
+        background: linear-gradient(
+          0deg,
+          rgba(25, 159, 25, 1) 0%,
+          rgba(0, 255, 0, 1) 43%,
+          rgba(255, 255, 0, 1) 76%,
+          rgba(255, 0, 0, 1) 100%
+        );
+      }
+
+      .bus .level .mask {
+        background: #eee;
+        height: 100%;
+        width: 100%;
+        transition: transform linear 0.02s;
+        transform: scaleY(1);
+        transform-origin: top;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="init-overlay">Click to start the mixer</button>
+    <div class="mixer">
+      <div class="controls">
+        <div class="play-button">
+          <button>
+            <span class="material-symbols-outlined">play_arrow</span>
+          </button>
+        </div>
+        <canvas class="waveform" width="500" height="100"></canvas>
+      </div>
+      <div class="buses">
+        <div class="bus">
+          <div class="slider">
+            <div class="track"></div>
+            <button></button>
+          </div>
+          <div class="name-and-level">
+            <div class="name">Master</div>
+            <div class="level">
+              <div class="mask"></div>
+            </div>
+          </div>
+        </div>
+        <div class="master-separator"></div>
+      </div>
+    </div>
+    <script>
+      const FILE = './audio/MultiChannel.ogg'
+      const CHANNELS = [
+        {
+          name: 'Bass',
+          channels: [0, 2],
+        },
+
+        {
+          name: 'Drums',
+          channels: [1, 6],
+        },
+
+        {
+          name: 'Rhodes',
+          channels: [4, 7],
+        },
+        {
+          name: 'Synth',
+          channels: [3, 5],
+        },
+      ]
+
+      const init = async () => {
+        // Hide the init overlay
+        initButton.parentElement.removeChild(initButton)
+
+        // NOTE: This initialization must be triggered by an user event,
+        // hence the need for the initialization overlay. This can be handled
+        // elsewhere if needed, for demo purposes the overlay is handy.
+        const audioContext = new AudioContext()
+
+        //
+        //   Setting up the master bus
+        //
+        /////////////////////////////////
+
+        const masterAnalyzer = audioContext.createAnalyser()
+        masterAnalyzer.fftSize = 2048
+
+        // Create the master gain node. This is what all the other buses
+        // are connected to, and this node then connects to the audio
+        // destination.
+        const masterGain = audioContext.createGain()
+        masterGain.connect(masterAnalyzer)
+        masterGain.connect(audioContext.destination)
+
+        // Use the Master bus as a template
+        const masterBus = document.querySelector('.bus')
+        const busesContainer = document.querySelector('.buses')
+
+        const buses = [
+          {
+            name: 'Master',
+            buffer: null,
+            element: masterBus,
+            gainNode: masterGain,
+            analyzerNode: masterAnalyzer,
+            levelMask: masterBus.querySelector('.level .mask'),
+            analyzerBuffer: new Float32Array(masterAnalyzer.frequencyBinCount),
+          },
+        ]
+
+        //
+        //   Setting up the multichannel audio buffer
+        //
+        /////////////////////////////////
+
+        // Fetch the audio file and decode the audio data into an AudioBuffer object.
+        const buffer = await new Promise((resolve, reject) =>
+          fetch(FILE)
+            .then((res) => res.arrayBuffer())
+            .then((buffer) =>
+              audioContext.decodeAudioData(buffer, resolve, reject)
+            )
+        )
+
+        //
+        //   Initializing the buses
+        //
+        /////////////////////////////////
+
+        for (const channel of CHANNELS) {
+          // For each channel, create an individual buffer from the corresponding
+          // channels in the original file
+          const channelBuffer = audioContext.createBuffer(
+            2,
+            buffer.length,
+            buffer.sampleRate
+          )
+          channelBuffer.copyToChannel(
+            buffer.getChannelData(channel.channels[0]),
+            0,
+            0
+          )
+          channelBuffer.copyToChannel(
+            buffer.getChannelData(channel.channels[1]),
+            1,
+            0
+          )
+
+          // Setup an AnalyzerNode for level monitoring. This is only used for the
+          // visualization.
+          const analyzerNode = audioContext.createAnalyser()
+          analyzerNode.fftSize = 2048
+
+          // This buffer is used to dump the data out of the analyzer node from which
+          // the audio level is calculated. It is created here as it can be reused
+          // as many times as we need.
+          const analyzerBuffer = new Float32Array(
+            analyzerNode.frequencyBinCount
+          )
+
+          // Create the GainNode for the bus. This node controls the actual sound level
+          // of each bus. This is then connected both to the analyzer node and the master
+          // gain node.
+          const gainNode = audioContext.createGain()
+          gainNode.connect(analyzerNode)
+          gainNode.connect(masterGain)
+          gainNode.gain.value = 1
+
+          // Clone the bus HTML element and append it to the bus container
+          const bus = masterBus.cloneNode(true)
+          busesContainer.appendChild(bus)
+          bus.querySelector('.name').innerText = channel.name
+
+          buses.push({
+            name: channel.name,
+            buffer: channelBuffer,
+            gainNode,
+            analyzerNode,
+            levelMask: bus.querySelector('.level .mask'),
+            analyzerBuffer,
+            element: bus,
+          })
+        }
+
+        const busesWithoutMaster = buses.filter((bus) => bus.name !== 'Master')
+
+        //
+        //   Animating the volume level bars for each bus
+        //
+        /////////////////////////////////
+
+        ;(function animateLevelBars() {
+          for (const bus of buses) {
+            // Copy the latest data from the analyzer node into the corresponding buffer,
+            // find the maximum sample value and use that to determine the sound level.
+            bus.analyzerNode.getFloatTimeDomainData(bus.analyzerBuffer)
+            const max = Math.max(
+              ...bus.analyzerBuffer.map((value) => Math.abs(value))
+            )
+
+            // This isn't even close to being actual dB values, but using sqrt
+            // gives us good enough approximation for visualization.
+            bus.levelMask.style.transform = `scaleY(${Math.max(
+              1 - Math.sqrt(max),
+              0
+            )})`
+          }
+
+          requestAnimationFrame(animateLevelBars)
+        })()
+
+        // Stores [loopStart, loopEnd] if set.
+        let loop = null
+
+        // Stores the AudioBufferSourceNode instances of the channels being player.
+        let audioSources = []
+
+        // Boolean indicating if the player is active.
+        let isPlaying = false
+
+        // The start time of the playback relative to `audioContext.currentTime`
+        let startTime = 0
+
+        //
+        //   Handling the mixer sliders
+        //
+        /////////////////////////////////
+
+        let sliderDragState = null
+
+        for (const bus of buses) {
+          const sliderButton = bus.element.querySelector('.slider button')
+
+          // Register only the mousedown handler for each slider. All other events are handled
+          // on the document level, as we want to support dragging even outside the slider itself.
+          sliderButton.addEventListener('mousedown', (evt) => {
+            sliderDragState = {
+              dragPos: evt.pageY,
+              bus,
+            }
+          })
+        }
+
+        document.addEventListener('mouseup', () => {
+          if (sliderDragState === null) return
+          sliderDragState = null
+        })
+
+        document.addEventListener('mousemove', (evt) => {
+          if (sliderDragState === null) return
+
+          evt.preventDefault()
+
+          const sliderButton =
+            sliderDragState.bus.element.querySelector('.slider button')
+          const sliderTrack =
+            sliderDragState.bus.element.querySelector('.slider')
+
+          const sliderTrackLength =
+            sliderTrack.getBoundingClientRect().height - 12
+
+          // TODO: There are some hardcoded constant here which could probably be moved to either
+          // well-names constants or resolved dynamically.
+
+          const gainValue = sliderDragState.bus.gainNode.gain.value
+          const nextValue = Math.max(
+            Math.min(
+              1.25,
+              gainValue +
+                ((sliderDragState.dragPos - evt.pageY) / sliderTrackLength) *
+                  1.25
+            ),
+            0
+          )
+          sliderDragState.dragPos = evt.pageY
+
+          // Setting the gainNode's value might cause some crackling. However, without setting it directly
+          // (e.g. via `setValueAtTime` or similar) we must store the value separately to ensure correct
+          // value at the time of the event.
+          sliderDragState.bus.gainNode.gain.value = nextValue
+
+          sliderButton.style.transform = `translateY(${
+            sliderTrackLength - (nextValue / 1.25) * sliderTrackLength - 4
+          }px)`
+        })
+
+        //
+        //   Rendering the initial waveform
+        //
+        /////////////////////////////////
+
+        const sampleCount = Math.max(
+          ...busesWithoutMaster.map(({ buffer }) => buffer.length)
+        )
+        const waveformCanvas = document.querySelector('.waveform')
+        const waveformContext = waveformCanvas.getContext('2d')
+
+        const sliceLength = Math.floor(sampleCount / waveformCanvas.width)
+        const channelData = busesWithoutMaster.map(({ buffer }) =>
+          buffer.getChannelData(0)
+        )
+
+        // Render the waveform of the initial file without taking the mix into account.
+        // This implementation is far from realistic. It's just a quick approximation
+        // of the sound level.
+        waveformContext.fillStyle = '#ccc'
+        for (let i = 0; i < waveformCanvas.width; i++) {
+          let max = 0
+
+          for (let k = 0; k < sliceLength; k++) {
+            let sample = 0
+            for (let j = 0; j < channelData.length; j++) {
+              sample += Math.abs(channelData[j][i * sliceLength + k])
+            }
+            max = Math.max(max, sample)
+          }
+
+          waveformContext.fillRect(i, 50 - max * 64, 1, max * 64 * 2)
+        }
+
+        // Store the waveform image so it can be re-rendered later.
+        const waveformImageData = waveformContext.getImageData(
+          0,
+          0,
+          waveformCanvas.width,
+          waveformCanvas.height
+        )
+
+        //
+        //   Loop creation
+        //
+        /////////////////////////////////
+
+        // Stores the starting position of the loop creation, whether it will be forwards
+        // or backwards.
+        let loopCreationPosition = null
+
+        waveformCanvas.addEventListener('mousedown', (evt) => {
+          if (isPlaying) {
+            stopPlayback()
+          }
+
+          const { left } = waveformCanvas.getBoundingClientRect()
+
+          loopCreationPosition =
+            ((evt.pageX - left) / waveformCanvas.width) * buffer.duration
+
+          // Initialize both the start and the end as same value.
+          loop = [loopCreationPosition, loopCreationPosition]
+        })
+
+        document.addEventListener('mousemove', (evt) => {
+          if (loopCreationPosition === null) return
+
+          evt.preventDefault()
+
+          const { left } = waveformCanvas.getBoundingClientRect()
+          const cursorPositionInTime =
+            ((evt.pageX - left) / waveformCanvas.width) * buffer.duration
+
+          // Set the smaller of the values as the loop start position.
+          if (cursorPositionInTime < loopCreationPosition) {
+            loop[0] = cursorPositionInTime
+            loop[1] = loopCreationPosition
+          } else {
+            loop[0] = loopCreationPosition
+            loop[1] = cursorPositionInTime
+          }
+        })
+
+        document.addEventListener('mouseup', (evt) => {
+          if (loopCreationPosition === null) return
+          const { left } = waveformCanvas.getBoundingClientRect()
+          const cursorPositionInTime =
+            ((evt.pageX - left) / waveformCanvas.width) * buffer.duration
+
+          // If the loop length is small enough, don't trigger looping at all.
+          // Just seek to the position the cursor was last at.
+          if (Math.abs(cursorPositionInTime - loopCreationPosition) < 1.0) {
+            loop = null
+            loopCreationPosition = null
+            startPlayback(cursorPositionInTime)
+            return
+          }
+
+          loopCreationPosition = null
+          startPlayback()
+        })
+        //
+        //   Animating the playhead and looping on the waveform canvas
+        //
+        /////////////////////////////////
+        ;(function animatePlayHead() {
+          // Use the initial waveform as background. The changes to the mixer
+          // inputs will not affect this.
+          waveformContext.putImageData(waveformImageData, 0, 0)
+
+          // Render the loop range
+          if (loop) {
+            const loopStartOnCanvas =
+              (loop[0] / buffer.duration) * waveformCanvas.width
+            const loopEndOnCanvas =
+              (loop[1] / buffer.duration) * waveformCanvas.width
+            const loopWidthOnCanvas = loopEndOnCanvas - loopStartOnCanvas
+
+            // Render the loop area overlay
+            waveformContext.fillStyle = 'rgba(255, 100, 0, 0.2)'
+            waveformContext.fillRect(
+              loopStartOnCanvas,
+              0,
+              loopWidthOnCanvas,
+              waveformCanvas.height
+            )
+
+            // Render the loop area start and end
+            waveformContext.fillStyle = 'rgba(200, 100, 0, 0.5)'
+            waveformContext.fillRect(
+              loopStartOnCanvas,
+              0,
+              2,
+              waveformCanvas.height
+            )
+            waveformContext.fillRect(
+              loopEndOnCanvas,
+              0,
+              2,
+              waveformCanvas.height
+            )
+          }
+
+          // Render the playhead
+          if (isPlaying) {
+            const loopLength =
+              loop === null ? buffer.duration : loop[1] - loop[0]
+            const offset = loop === null ? 0 : loop[0] / buffer.duration
+
+            const playHeadPos =
+              offset +
+              ((audioContext.currentTime - startTime) % loopLength) /
+                buffer.duration
+
+            waveformContext.fillStyle = 'rgba(0, 200, 0, 0.8)'
+            waveformContext.fillRect(
+              waveformCanvas.width * playHeadPos,
+              0,
+              2,
+              waveformCanvas.height
+            )
+          }
+          requestAnimationFrame(animatePlayHead)
+        })()
+
+        //
+        //   Starting and stopping playback
+        //
+        /////////////////////////////////
+
+        const playButton = document.querySelector('.play-button button')
+
+        const startPlayback = (startAt = 0) => {
+          playButton.querySelector('span').innerText = 'pause'
+
+          isPlaying = true
+          audioSources = busesWithoutMaster.map((bus) => {
+            const source = audioContext.createBufferSource()
+            source.buffer = bus.buffer
+            source.connect(bus.gainNode)
+
+            if (loop !== null) {
+              source.loopStart = loop[0]
+              source.loopEnd = loop[1]
+              source.loop = true
+              startTime = audioContext.currentTime
+              source.start(0, loop[0])
+            } else {
+              startTime = audioContext.currentTime - startAt
+              source.start(0, startAt)
+            }
+
+            return {
+              source,
+              bus,
+            }
+          })
+        }
+
+        const stopPlayback = () => {
+          playButton.querySelector('span').innerText = 'play_arrow'
+
+          isPlaying = false
+          for (const { bus, source } of audioSources) {
+            source.disconnect(bus.gainNode)
+            source.stop()
+          }
+        }
+
+        playButton.addEventListener('click', () => {
+          if (isPlaying) {
+            stopPlayback()
+          } else {
+            startPlayback()
+          }
+        })
+      }
+
+      const initButton = document.querySelector('#init-overlay')
+      initButton.addEventListener('click', init)
+    </script>
+  </body>
+</html>

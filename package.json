@@ -1,0 +1,11 @@
+{
+  "name": "simple-mixer",
+  "version": "1.0.0",
+  "description": "Simple audio mixer",
+  "main": "index.js",
+  "author": "Teemu Pääkkönen",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "prettier": "^2.8.3"
+  }
+}
